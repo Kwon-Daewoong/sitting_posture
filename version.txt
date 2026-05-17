@@ -1,0 +1,14 @@
+[Python & Package Version]
+
+Python
+- Python 3.14.3
+
+Packages
+- numpy == 2.4.5
+- pandas == 3.0.3
+- matplotlib == 3.10.9
+- scikit-learn == 1.8.0
+- optuna == 4.8.0
+- torch == 2.12.0
+- torchvision == 0.27.0
+- torchaudio == 2.11.0

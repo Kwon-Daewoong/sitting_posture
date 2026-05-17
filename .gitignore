@@ -1,0 +1,25 @@
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Virtual environment
+.venv/
+venv/
+
+# Dataset
+*.csv
+
+# Trained model
+*.pth
+*.pt
+*.pkl
+
+# Results
+results/
+
+# macOS
+.DS_Store
+
+# VSCode
+.vscode/
