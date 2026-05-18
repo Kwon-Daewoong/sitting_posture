@@ -14,7 +14,24 @@
 4. 학습: AdamW + CosineAnnealingLR + Label Smoothing + Gradient Clipping
 5. 검증: 5-Fold + Optuna 30회 탐색
 6. 저장: Best val_acc 모델 + scaler + config
+
+[수정 사항]
+-입력 : 16개 좌표 + 3개 파생 feature 
+-판별 : 1차 학습기반 이진분류 + 2차 규칙기반(목/상체 각각 진단)
+-출력 : 상태(정상/주의/위험) + 어디 문제 + 목각도 + 상체 각도 
+
+[2단계 판별]
+-cva각도 > 15도 -> 목문제 
+-trunk_angle > 9도 -> 상체 문제 
+
+[최종 판정]
+ - mlp good + 둘다 정상 -> 정상
+ - mlp bad + 하나만 문제 -> 주의 (어디문제인지)
+ - mlp bad + 둘다 문제 -> 위험 
+ - mlp bad + 둘다 정상 -> 주의(모델 이상 감지) 
+
 """
+
 
 import os
 import random
@@ -55,21 +72,28 @@ CONFIG = {
     "CSV_PATH":  "posture_merged.csv",
     "LABEL_COL": "label_binary",
     "FEATURE_COLS": [
+        # 좌표 16개 (인덱스 0~15)
         "right_eye_x","right_eye_y","right_eye_z","right_eye_v",
         "right_ear_x","right_ear_y","right_ear_z","right_ear_v",
         "right_shoulder_x", "right_shoulder_y", "right_shoulder_z", "right_shoulder_v",
         "right_hip_x","right_hip_y","right_hip_z","right_hip_v",
+        # 추가 - 파생 Feature 3개 (인덱스 16~18)
+        "cva_angle",
+        "ear_shoulder_dist",
+        "trunk_angle",
     ],
     "OUTPUT_DIM": 2,
 
-    # 16차원 인덱스
-    "X_IDX": [0, 4, 8,  12],# 모든 x 좌표
-    "Y_IDX": [1, 5, 9,  13],# 모든 y 좌표
-    "Z_IDX": [2, 6, 10, 14],# 모든 z 좌표
-    "V_IDX": [3, 7, 11, 15],# 모든 v (신뢰도) — 상대좌표 변환 X
-    "SH_X_IDX": 8,# right_shoulder_x
-    "SH_Y_IDX": 9,# right_shoulder_y
-    "SH_Z_IDX": 10,# right_shoulder_z
+    # 좌표인덱스 (상대좌표계 변환에 사용 - feather는 제외 )
+    "X_IDX": [0, 4, 8,  12],
+    "Y_IDX": [1, 5, 9,  13],
+    "Z_IDX": [2, 6, 10, 14],
+    "SH_X_IDX": 8,
+    "SH_Y_IDX": 9,
+    "SH_Z_IDX": 10,
+
+    #파상 feature 
+    "DERIVED_IDX": [16, 17, 18],
 
     # 교차검증 (k-flod)
     "N_FOLDS": 5,
@@ -117,7 +141,7 @@ def to_relative_coords(X: np.ndarray) -> np.ndarray:
     X_rel[:, CONFIG["X_IDX"]] -= sh_x
     X_rel[:, CONFIG["Y_IDX"]] -= sh_y
     X_rel[:, CONFIG["Z_IDX"]] -= sh_z
-    # V_IDX는 그대로 유지 (신뢰도)
+    # V_IDX는 그대로 유지 (신뢰도) / feature는 좌표랑 무관 각도/ 거리값 변환 불필요 
 
     return X_rel
 
@@ -140,12 +164,6 @@ def augment_sample(x: np.ndarray, noise_std: float) -> np.ndarray:
     return x_aug
 
 
-
-    '''
-    차후 여기에 규칙기반 feature 추가 후 차원을 늘리면 됨 
-    
-    
-    '''
 # ════════════════════════════════════════════════════════════════
 # 4.Dataset
 class PostureDataset(Dataset):

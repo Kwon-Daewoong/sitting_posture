@@ -23,3 +23,6 @@ results/
 
 # VSCode
 .vscode/
+
+avg_highlight_graphs
+test_gui.py
