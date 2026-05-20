@@ -1,5 +1,4 @@
 [Python & Package Version]
-
 Python
 - Python 3.14.3
 

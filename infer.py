@@ -12,6 +12,10 @@
 -판별 : 1차 학습기반 이진분류 + 2차 규칙기반(목/상체 각각 진단)
 -출력 : 상태(정상/주의/위험) + 어디 문제 + 목각도 + 상체 각도 
 
+[2차 수정사항]
+-추론함수 규칙판정 -> 부호기반으로 수정 
+-출력 또한 부호기반으로 수정 
+
 [2단계 판별]
 -cva각도 > 15도 -> 목문제 
 -trunk_angle > 9도 -> 상체 문제 
@@ -197,10 +201,14 @@ def predict(landmarks_16, model, ckpt):
     # 2차 : 규칙기반 판별 
     issues = []
     if cva_angle > CVA_THRESHOLD:
-        issues.append("목 문제")
+        issues.append("거북목 (앞으로 기움)")
+    elif cva_angle < -CVA_THRESHOLD:
+        issues.append("목 뒤로 젖힘")
+ 
     if trunk_angle > TRUNK_THRESHOLD:
-        issues.append("상체 문제")
-
+        issues.append("상체 앞으로 굽음")
+    elif trunk_angle < -TRUNK_THRESHOLD:
+        issues.append("상체 뒤로 젖힘")
 
     # 최종 상태 출력 
     if mlp_result == "Good" and len(issues) == 0:
@@ -252,14 +260,26 @@ def print_result(result: dict, sample_name: str = ""):
     print(f"\n  [2차] 규칙 기반 진단:")
  
     # CVA(목) 표시
-    cva_status = "OK" if result["cva_angle"] <= CVA_THRESHOLD else "NotGood"
-    print(f"        목 각도 (CVA):    {result['cva_angle']:6.2f}° "
-          f"(임계값 {CVA_THRESHOLD}°)  [{cva_status}]")
+    cva = result["cva_angle"]
+    if abs(cva) <= CVA_THRESHOLD:
+        cva_status = "OK"
+    elif cva > CVA_THRESHOLD:
+        cva_status = "NotGood (앞으로/거북목)"
+    else:
+        cva_status = "NotGood (뒤로 젖힘)"
+    print(f"        목 각도 (CVA):    {cva:+7.2f}° "
+          f"(임계값 ±{CVA_THRESHOLD}°)  [{cva_status}]")
  
     # Trunk(상체) 표시
-    trunk_status = "OK" if result["trunk_angle"] <= TRUNK_THRESHOLD else "NotGood"
-    print(f"        상체 각도:        {result['trunk_angle']:6.2f}° "
-          f"(임계값 {TRUNK_THRESHOLD}°)  [{trunk_status}]")
+    trunk = result["trunk_angle"]
+    if abs(trunk) <= TRUNK_THRESHOLD:
+        trunk_status = "OK"
+    elif trunk > TRUNK_THRESHOLD:
+        trunk_status = "NotGood (앞으로 굽음)"
+    else:
+        trunk_status = "NotGood (뒤로 젖힘)"
+    print(f"        상체 각도:        {trunk:+7.2f}° "
+          f"(임계값 ±{TRUNK_THRESHOLD}°)  [{trunk_status}]")
  
     print(f"        귀-어깨 거리:    {result['ear_shoulder_dist']:.4f}")
 # 테스트 코드
