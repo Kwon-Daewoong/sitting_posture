@@ -4,7 +4,7 @@
 
 [입력 데이터]
 - posture_merged.csv (3개 CSV 평균, 591행)
-- feature: right_eye/ear/shoulder/hip × (x, y, z, v) = 16차원
+- feature: r_eye/ear/shoulder/hip × (x, y, z, v) = 16차원
 - label: label_binary (0=Good, 1=Bad)
 
 [적용 기법]
@@ -78,10 +78,10 @@ CONFIG = {
     "LABEL_COL": "label_binary",
     "FEATURE_COLS": [
         # 좌표 16개 (인덱스 0~15)
-        "right_eye_x","right_eye_y","right_eye_z","right_eye_v",
-        "right_ear_x","right_ear_y","right_ear_z","right_ear_v",
-        "right_shoulder_x", "right_shoulder_y", "right_shoulder_z", "right_shoulder_v",
-        "right_hip_x","right_hip_y","right_hip_z","right_hip_v",
+        "r_eye_x","r_eye_y","r_eye_z","r_eye_v",
+        "r_ear_x","r_ear_y","r_ear_z","r_ear_v",
+        "r_shoulder_x", "r_shoulder_y", "r_shoulder_z", "r_shoulder_v",
+        "r_hip_x","r_hip_y","r_hip_z","r_hip_v",
         # 추가 - 파생 Feature 3개 (인덱스 16~18)
         "cva_angle",
         "ear_shoulder_dist",
@@ -140,7 +140,7 @@ os.makedirs(CONFIG["RESULT_DIR"], exist_ok=True)
 # 3. 어깨 기준 상대좌표 변환
 def to_relative_coords(X: np.ndarray) -> np.ndarray:
     """
-    어깨 (right_shoulder)를 원점으로 하는 상대좌표 변환.
+    어깨 (r_shoulder)를 원점으로 하는 상대좌표 변환.
     - x, y, z: 어깨 좌표 기준으로 평행이동
     - v (신뢰도): 변환하지 않음
 

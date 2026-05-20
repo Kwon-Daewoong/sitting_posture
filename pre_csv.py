@@ -2,7 +2,7 @@
 3개 CSV (신뢰도 0.3 / 0.5 / 0.7) 좌표 평균내서 통합 CSV 생성
 ================================================
 
-같은 (Label, FileName) 이미지의 좌표를 평균내서 더 안정적인 데이터 생성.
+같은 (label, file_name) 이미지의 좌표를 평균내서 더 안정적인 데이터 생성.
 이진 라벨 매핑: Good2/Good3 → 0, Bad1/Bad2 → 1
 
 # 수정사항
@@ -14,7 +14,7 @@ import numpy as np
 
 # ====================================================
 # 1. 3개 CSV 로드
-INPUT_FILES = ["posture_0.3.csv", "posture_0.5.csv", "posture_0.7.csv"]
+INPUT_FILES = ["train_landmarks_ts3.csv", "train_landmarks_ts5.csv", "train_landmarks_ts7.csv"]
 OUTPUT_FILE = "posture_merged.csv"
 
 dfs = []
@@ -28,19 +28,19 @@ combined = pd.concat(dfs, ignore_index=True)
 print(f"\n단순 합산: {len(combined)}행")
 
 # ====================================================
-# 2. (Label, FileName) 기준으로 좌표 평균
+# 2. (label, file_name) 기준으로 좌표 평균
 COORD_COLS = [
-    "right_eye_x", "right_eye_y", "right_eye_z", "right_eye_v",
-    "right_ear_x", "right_ear_y", "right_ear_z", "right_ear_v",
-    "right_shoulder_x", "right_shoulder_y", "right_shoulder_z", "right_shoulder_v",
-    "right_hip_x", "right_hip_y", "right_hip_z", "right_hip_v",
+    "r_eye_x", "r_eye_y", "r_eye_z", "r_eye_v",
+    "r_ear_x", "r_ear_y", "r_ear_z", "r_ear_v",
+    "r_shoulder_x", "r_shoulder_y", "r_shoulder_z", "r_shoulder_v",
+    "r_hip_x", "r_hip_y", "r_hip_z", "r_hip_v",
 ]
 
-merged = (combined.groupby(["Label", "FileName"], as_index=False)[COORD_COLS].mean())
+merged = (combined.groupby(["label", "file_name"], as_index=False)[COORD_COLS].mean())
 
 # 평균에 사용된 CSV 개수도 기록 (1~3)
-count_per_image = (combined.groupby(["Label", "FileName"]).size().reset_index(name="n_sources"))
-merged = merged.merge(count_per_image, on=["Label", "FileName"])
+count_per_image = (combined.groupby(["label", "file_name"]).size().reset_index(name="n_sources"))
+merged = merged.merge(count_per_image, on=["label", "file_name"])
 
 print(f"평균 후 고유 이미지: {len(merged)}행")
 print(f"\n평균에 사용된 CSV 수 분포:")
@@ -49,18 +49,24 @@ print(merged["n_sources"].value_counts().sort_index())
 # ====================================================
 # 3. 이진 라벨 추가 (Good*/Bad*)
 def to_binary_label(label_str: str) -> int:
-    """Good2/Good3 → 0, Bad1/Bad2 → 1"""
+    """Good2/Good3 → 0, Bad1/Bad2 → 1
+
     if label_str.startswith("Good"):
         return 0
     elif label_str.startswith("Bad"):
         return 1
     else:
         raise ValueError(f"알 수 없는 라벨: {label_str}")
+        """
+    if label_str == "good_posture":
+        return 0
+    else:
+        return 1
 
-merged["label_binary"] = merged["Label"].apply(to_binary_label)
+merged["label_binary"] = merged["label"].apply(to_binary_label)
 
 print(f"\n원본 라벨 분포:")
-print(merged["Label"].value_counts())
+print(merged["label"].value_counts())
 print(f"\n이진 라벨 분포:")
 print(merged["label_binary"].value_counts())
 
@@ -92,9 +98,9 @@ def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
     trunk_angle = 0: 곧은 자세
 
     """
-    ear_x, ear_y = df["right_ear_x"], df["right_ear_y"]
-    sh_x,  sh_y  = df["right_shoulder_x"], df["right_shoulder_y"]
-    hip_x, hip_y = df["right_hip_x"],      df["right_hip_y"]
+    ear_x, ear_y = df["r_ear_x"], df["r_ear_y"]
+    sh_x,  sh_y  = df["r_shoulder_x"], df["r_shoulder_y"]
+    hip_x, hip_y = df["r_hip_x"], df["r_hip_y"]
  
     #CVA 각도
     df["cva_angle"] = np.degrees(np.arctan2(
@@ -138,7 +144,7 @@ print("\n[CVA 부호별 분포 — 앞으로/뒤로 구분]")
 merged["cva_direction"] = merged["cva_angle"].apply(
     lambda x: "앞으로" if x > 15 else "뒤로" if x < -15 else "정상범위"
 )
-print(pd.crosstab(merged["Label"], merged["cva_direction"]))
+print(pd.crosstab(merged["label"], merged["cva_direction"]))
 
 
 # Good / Bad Feature 중앙값 비교
@@ -166,8 +172,8 @@ print(
         ascending=False
     )[
         [
-            "FileName",
-            "Label",
+            "file_name",
+            "label",
             "cva_angle"
         ]
     ]
@@ -183,8 +189,8 @@ print(
         ascending=False
     )[
         [
-            "FileName",
-            "Label",
+            "file_name",
+            "label",
             "trunk_angle"
         ]
     ]
@@ -196,13 +202,13 @@ print(
 # 컬럼 순서 정리 + feature 추가 
 DERIVED_COLS = ["cva_angle", "ear_shoulder_dist", "trunk_angle"]
 output_cols = (
-    ["Label", "label_binary", "FileName"]
+    ["label", "label_binary", "file_name"]
     + COORD_COLS
     + DERIVED_COLS
     + ["n_sources"]
 )
 
-#output_cols = ["Label", "label_binary", "FileName"] + COORD_COLS + ["n_sources"]
+#output_cols = ["label", "label_binary", "file_name"] + COORD_COLS + ["n_sources"]
 merged = merged[output_cols]
 
 merged.to_csv(OUTPUT_FILE, index=False, encoding="utf-8-sig")

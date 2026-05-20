@@ -33,7 +33,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
+import pandas as pd
+CSV_PATH = "test_landmarks_ts1.csv"
 # ════════════════════════════════════════════════════════════════
 # 설정 (학습 파일과 동일하게 유지)
 # ════════════════════════════════════════════════════════════════
@@ -287,6 +288,7 @@ def main():
     # 1. 모델 로드 (한 번만)
     model, ckpt = load_model()
 
+    '''
     #아래는 임시 더미값 실제 사용 시 실제 데이터로 교체
     test_samples = [
         # 자세 샘플
@@ -319,15 +321,136 @@ def main():
             ],
         }, 
     ]
+    '''
 
+    print(f"[CSV 로드] {CSV_PATH}")
+
+    df = pd.read_csv(CSV_PATH)
+
+    print(f"  총 샘플 수: {len(df)}")
+    print()
+
+    feature_cols = [
+        "r_eye_x",
+        "r_eye_y",
+        "r_eye_z",
+        "r_eye_v",
+
+        "r_ear_x",
+        "r_ear_y",
+        "r_ear_z",
+        "r_ear_v",
+
+        "r_shoulder_x",
+        "r_shoulder_y",
+        "r_shoulder_z",
+        "r_shoulder_v",
+
+        "r_hip_x",
+        "r_hip_y",
+        "r_hip_z",
+        "r_hip_v",
+    ]
+    # 컬럼 존재 검사
+    missing_cols = [
+        c for c in feature_cols
+        if c not in df.columns
+    ]
+    if missing_cols:
+        raise ValueError(
+            f"CSV 컬럼 없음:\n{missing_cols}"
+        )
+
+    results = []
+
+    for idx, row in df.iterrows():
+
+        try:
+
+            # 16개 landmark 추출
+            landmarks_16 = (
+                row[feature_cols]
+                .astype(float)
+                .tolist()
+            )
+
+            
+            # 추론
+            result = predict(
+                landmarks_16,
+                model,
+                ckpt
+            )
+
+            
+            # 샘플 이름
+            sample_name = f"Row {idx}"
+
+            if "file_name" in df.columns:
+                sample_name += (
+                    f" ({row['file_name']})"
+                )
+
+            print_result(
+                result,
+                sample_name
+            )
+
+            
+            # 결과 저장
+            save_row = {
+                "row_index": idx,
+                "file_name":
+                    row.get("file_name", ""),
+
+                "true_label":
+                    row.get("label", ""),
+
+                "status":
+                    result["status"],
+
+                "issues":
+                    ", ".join(result["issues"]),
+
+                "mlp_result":
+                    result["mlp_result"],
+
+                "mlp_confidence":
+                    result["mlp_confidence"],
+
+                "prob_good":
+                    result["prob_good"],
+
+                "prob_bad":
+                    result["prob_bad"],
+
+                "cva_angle":
+                    result["cva_angle"],
+
+                "trunk_angle":
+                    result["trunk_angle"],
+
+                "ear_shoulder_dist":
+                    result["ear_shoulder_dist"],
+            }
+
+            results.append(save_row)
+
+        except Exception as e:
+            print(
+                f"[ERROR] Row {idx}: {e}"
+            )
+
+    
     #추론 실행
     print("=" * 50)
     print("자세 판별 결과")
     print("=" * 50)
+    '''
     for sample in test_samples:
         result = predict(sample["landmarks"], model, ckpt)
         print_result(result, sample["name"])
-
+    '''
 
     
 
