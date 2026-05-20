@@ -19,6 +19,11 @@
 -입력 : 16개 좌표 + 3개 파생 feature 
 -판별 : 1차 학습기반 이진분류 + 2차 규칙기반(목/상체 각각 진단)
 -출력 : 상태(정상/주의/위험) + 어디 문제 + 목각도 + 상체 각도 
+[2차 수정 사항]
+-가우시안 노이즈 : 0,01 -> 0.015 std 약간 강화
+-좌표이동 : x,y좌표 평행이동 
+-좌표회전 : +_ 3도 정도(기울기에 대한 모델이므로 좌표회전이 심해지면 위험 각도 임계값보다 한참작게) 
+-스케일링 : 0.95배~1.05배
 
 [2단계 판별]
 -cva각도 > 15도 -> 목문제 
@@ -110,7 +115,15 @@ CONFIG = {
 
     # 증강
     "USE_AUGMENTATION": True,
-    "AUG_NOISE_STD": 0.01,
+    # 증강 수정 
+    "AUG_NOISE_STD": 0.025,
+    "AUG_TRANSLATE_RANGE": 0.05,
+    "AUG_TRANSLATE_PROB": 0.5,  
+    "AUG_ROTATION_DEG": 5.0,
+    "AUG_ROTATION_PROB": 0.5,
+    "AUG_SCALE_RANGE": (0.95, 1.05),
+    "AUG_SCALE_PROB": 0.5,
+
 
     # 좌표 정규화
     "USE_RELATIVE_COORDS": True,
@@ -145,22 +158,53 @@ def to_relative_coords(X: np.ndarray) -> np.ndarray:
 
     return X_rel
 
-
-def augment_sample(x: np.ndarray, noise_std: float) -> np.ndarray:
+# 데이터 증강 4가지 
+def augment_sample(x: np.ndarray) -> np.ndarray:
     """
-    가우시안 노이즈 주입 — MediaPipe 좌표 흔들림 시뮬레이션.
-
-    신뢰도 v에는 노이즈 미주입 (값이 0~1로 제한된 확률값이라).
+    가우시안 노이즈 주입 — MediaPipe 좌표 흔들림 시뮬레이션
+    좌표이동,좌표 회전, 좌표 스케일링
+    신뢰도 v에는 노이즈 미주입 (값이 0~1로 제한된 확률값이라)
     """
+
     '''
-    #좌우대칭 : 사람 좌우 무관하게 학습 진행
+    #좌우대칭 : 사람 좌우 무관하게 학습 진행 (우측 이미지로 무관 미진행 )
     if np.random.rand() < flip_prob:
         x_aug[[0, 2, 4, 6]] *= -1  # 모든 x좌표
     '''
+    #노이즈 주입
     x_aug = x.copy()
+
     # x, y, z에만 노이즈 추가
     coord_idx = CONFIG["X_IDX"] + CONFIG["Y_IDX"] + CONFIG["Z_IDX"]
-    x_aug[coord_idx] += np.random.normal(0, noise_std, size=len(coord_idx))
+    x_aug[coord_idx] += np.random.normal(0, CONFIG["AUG_NOISE_STD"], size=len(coord_idx))
+
+    #좌표이동
+    if np.random.rand() < CONFIG["AUG_TRANSLATE_PROB"]:
+        tx = np.random.uniform(-CONFIG["AUG_TRANSLATE_RANGE"],CONFIG["AUG_TRANSLATE_RANGE"])
+        ty = np.random.uniform(-CONFIG["AUG_TRANSLATE_RANGE"],CONFIG["AUG_TRANSLATE_RANGE"])
+        x_aug[CONFIG["X_IDX"]] += tx
+        x_aug[CONFIG["Y_IDX"]] += ty
+    
+
+    #좌표 회전 
+    if np.random.rand() < CONFIG["AUG_ROTATION_PROB"]:
+        angle_rad = np.radians(np.random.uniform(-CONFIG["AUG_ROTATION_DEG"], CONFIG["AUG_ROTATION_DEG"]))
+        cos_a = np.cos(angle_rad)
+        sin_a = np.sin(angle_rad)
+ 
+        # 2D 회전 (x, y 좌표만 호ㅣ전)
+        # 어깨 기준 상대좌표라 원점(어깨) 중심 회전 자연스러움
+        for xi, yi in zip(CONFIG["X_IDX"], CONFIG["Y_IDX"]):
+            x_old = x_aug[xi]
+            y_old = x_aug[yi]
+            x_aug[xi] = x_old * cos_a - y_old * sin_a
+            x_aug[yi] = x_old * sin_a + y_old * cos_a
+    #스케일링
+    if np.random.rand() < CONFIG["AUG_SCALE_PROB"]:
+        scale = np.random.uniform(*CONFIG["AUG_SCALE_RANGE"])
+        x_aug[CONFIG["X_IDX"]] *= scale
+        x_aug[CONFIG["Y_IDX"]] *= scale
+        x_aug[CONFIG["Z_IDX"]] *= scale
     return x_aug
 
 
@@ -171,7 +215,7 @@ class PostureDataset(Dataset):
         self.X = X.astype(np.float32)
         self.y = y.astype(np.int64)
         self.augment = augment
-        self.noise_std = noise_std
+        #self.noise_std = noise_std
 
     def __len__(self):
         return len(self.y)
@@ -179,7 +223,7 @@ class PostureDataset(Dataset):
     def __getitem__(self, idx):
         x = self.X[idx]
         if self.augment:
-            x = augment_sample(x, self.noise_std)
+            x = augment_sample(x)
         return torch.tensor(x, dtype=torch.float32), torch.tensor(self.y[idx])
 
 
@@ -252,7 +296,7 @@ def evaluate(model, loader, criterion):
 # ════════════════════════════════════════════════════════════════
 # 7. 단일 학습 루프
 def train_model(X_train, y_train, X_val, y_val, params, verbose=False):
-    train_ds = PostureDataset(X_train, y_train,augment=CONFIG["USE_AUGMENTATION"], noise_std=CONFIG["AUG_NOISE_STD"])
+    train_ds = PostureDataset(X_train, y_train,augment=CONFIG["USE_AUGMENTATION"])
     val_ds   = PostureDataset(X_val, y_val, augment=False)
     train_dl = DataLoader(train_ds, batch_size=params["batch_size"], shuffle=True)
     val_dl   = DataLoader(val_ds,   batch_size=params["batch_size"], shuffle=False)
@@ -444,6 +488,7 @@ def main():
     }, CONFIG["MODEL_SAVE_PATH"])
     print(f"  저장 완료: {CONFIG['MODEL_SAVE_PATH']}")
 
+'''
     # ── 6. 시각화 ──
     fig, axes = plt.subplots(2, CONFIG["N_FOLDS"],figsize=(4*CONFIG["N_FOLDS"], 6))
     for i, r in enumerate(fold_results):
@@ -459,8 +504,7 @@ def main():
     plt.tight_layout()
     plt.savefig(f"{CONFIG['RESULT_DIR']}/training_curves.png", dpi=100)
     print(f"  학습 곡선 저장: {CONFIG['RESULT_DIR']}/training_curves.png")
-
-
+'''
 # ════════════════════════════════════════════════════════════════
 #11. 추론 함수
 '''
