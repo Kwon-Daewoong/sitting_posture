@@ -92,7 +92,7 @@ class PostureVideoProcessor:
         results = self.pose.process(image_rgb)
 
         if not results.pose_landmarks:
-            return None, results, None
+            return None, results, None, "NO_POSE"
 
         landmarks = results.pose_landmarks.landmark
 
@@ -106,13 +106,13 @@ class PostureVideoProcessor:
             selected = RIGHT_JOINTS
             side = "right"
 
-        is_valid = all(
-            landmarks[idx].visibility >= VISIBILITY_THRESHOLD
-            for idx in selected.values()
-        )
+        low_visibility_joints = [
+            name for name, idx in selected.items()
+            if landmarks[idx].visibility < VISIBILITY_THRESHOLD
+        ]
 
-        if not is_valid:
-            return None, results, side
+        if low_visibility_joints:
+            return None, results, side, "LOW_VISIBILITY"
 
         features = []
 
@@ -123,7 +123,118 @@ class PostureVideoProcessor:
             x = 1.0 - lm.x if side == "left" else lm.x
             features.extend([x, lm.y, lm.z, lm.visibility])
 
-        return features, results, side
+        return features, results, side, "OK"
+
+    def draw_text_panel(self, img, status_text, cva_text, trunk_text, warning_text=None, color=(255, 255, 255)):
+        """
+        최종 시연용 화면:
+        Status, CVA, Trunk, Warning 중심으로 간단히 표시한다.
+        """
+        panel_x, panel_y = 20, 25
+        line_gap = 38
+
+        cv2.putText(
+            img,
+            f"Status: {status_text}",
+            (panel_x, panel_y + line_gap),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1.0,
+            color,
+            2,
+        )
+
+        cv2.putText(
+            img,
+            cva_text,
+            (panel_x, panel_y + line_gap * 2),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.75,
+            color,
+            2,
+        )
+
+        cv2.putText(
+            img,
+            trunk_text,
+            (panel_x, panel_y + line_gap * 3),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.75,
+            color,
+            2,
+        )
+
+        if warning_text:
+            cv2.putText(
+                img,
+                warning_text,
+                (panel_x, panel_y + line_gap * 4 + 8),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                (0, 0, 255),
+                3,
+            )
+
+        return img
+
+    def draw_side_view_guide(self, img):
+        """
+        측면 자세 안내 문구와 간단한 기준선을 표시한다.
+        OpenCV는 한글 출력이 깨질 수 있어 영문으로 표시한다.
+        """
+        h, w, _ = img.shape
+
+        guide_text = "SIDE VIEW ONLY - Keep ear, shoulder, and hip visible"
+        cv2.putText(
+            img,
+            guide_text,
+            (20, h - 25),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.65,
+            (255, 255, 255),
+            2,
+        )
+
+        # 사용자가 상체를 화면 중앙에 맞추도록 돕는 약한 세로 가이드라인
+        x_center = int(w * 0.5)
+        cv2.line(img, (x_center, 0), (x_center, h), (80, 80, 80), 1)
+
+        return img
+
+    def draw_measurement_unavailable(self, img, reason):
+        """
+        landmark가 불안정할 때 모델 추론을 수행하지 않고
+        자세 조정 안내를 출력한다.
+        """
+        if reason == "NO_POSE":
+            message1 = "Measurement unavailable"
+            message2 = "No pose detected. Move into the camera frame."
+        elif reason == "LOW_VISIBILITY":
+            message1 = "Measurement unavailable"
+            message2 = "Ear/shoulder/hip visibility is low. Adjust side position."
+        else:
+            message1 = "Measurement unavailable"
+            message2 = "Please adjust your posture and camera position."
+
+        cv2.putText(
+            img,
+            message1,
+            (30, 55),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1.0,
+            (0, 255, 255),
+            2,
+        )
+        cv2.putText(
+            img,
+            message2,
+            (30, 95),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.65,
+            (0, 255, 255),
+            2,
+        )
+
+        return img
 
     def draw_selected_posture_line(self, img, results, side):
         if results is None or not results.pose_landmarks or side is None:
@@ -223,14 +334,17 @@ class PostureVideoProcessor:
             self.danger_start_time = None
             warning_on = False
 
-        return temporal_status, danger_ratio, abnormal_ratio, warning_on
+        return temporal_status, warning_on
 
     def recv(self, frame):
         img = frame.to_ndarray(format="bgr24")
         display_img = img.copy()
 
+        # 측면 자세 안내 문구 및 가이드라인 표시
+        display_img = self.draw_side_view_guide(display_img)
+
         # 1. landmark 추출
-        landmarks_16, results, side = self.extract_landmarks_16(img)
+        landmarks_16, results, side, detect_status = self.extract_landmarks_16(img)
 
         # 2. 전체 skeleton overlay
         if results is not None and results.pose_landmarks:
@@ -243,16 +357,9 @@ class PostureVideoProcessor:
         # 3. 프로젝트 핵심선: ear-shoulder-hip 별도 표시
         display_img = self.draw_selected_posture_line(display_img, results, side)
 
+        # landmark가 불안정하면 모델 추론하지 않고 측정 불가 안내
         if landmarks_16 is None:
-            cv2.putText(
-                display_img,
-                "Pose not detected",
-                (30, 50),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                1,
-                (0, 255, 255),
-                2,
-            )
+            display_img = self.draw_measurement_unavailable(display_img, detect_status)
             return av.VideoFrame.from_ndarray(display_img, format="bgr24")
 
         # 4. MLP 추론 및 각도 계산
@@ -262,7 +369,7 @@ class PostureVideoProcessor:
         angle_status, cva_bad, trunk_bad = self.classify_by_angles(result)
 
         # 6. Temporal Logic
-        temporal_status, danger_ratio, abnormal_ratio, warning_on = self.apply_temporal_logic(angle_status)
+        temporal_status, warning_on = self.apply_temporal_logic(angle_status)
 
         # 색상 설정
         if temporal_status == "정상":
@@ -275,94 +382,19 @@ class PostureVideoProcessor:
             color = (0, 0, 255)
             status_text = "DANGER"
 
-        # 화면 표시
-        cv2.putText(
+        cva_text = f"CVA: {result['cva_angle']:.2f} deg ({'BAD' if cva_bad else 'OK'})"
+        trunk_text = f"Trunk: {result['trunk_angle']:.2f} deg ({'BAD' if trunk_bad else 'OK'})"
+        warning_text = "WARNING: FIX YOUR POSTURE" if warning_on else None
+
+        # 최종 시연용 화면: Status, CVA, Trunk, Warning 중심으로 정리
+        display_img = self.draw_text_panel(
             display_img,
-            f"Status: {status_text}",
-            (30, 45),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            1.0,
-            color,
-            2,
+            status_text=status_text,
+            cva_text=cva_text,
+            trunk_text=trunk_text,
+            warning_text=warning_text,
+            color=color,
         )
-
-        cv2.putText(
-            display_img,
-            f"MLP: {result['mlp_result']} ({result['mlp_confidence']:.2f})",
-            (30, 85),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            color,
-            2,
-        )
-
-        cv2.putText(
-            display_img,
-            f"CVA: {result['cva_angle']:.2f} ({'BAD' if cva_bad else 'OK'})",
-            (30, 120),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            color,
-            2,
-        )
-
-        cv2.putText(
-            display_img,
-            f"Trunk: {result['trunk_angle']:.2f} ({'BAD' if trunk_bad else 'OK'})",
-            (30, 155),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            color,
-            2,
-        )
-
-        cv2.putText(
-            display_img,
-            f"Danger Ratio: {danger_ratio:.2f}",
-            (30, 190),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            color,
-            2,
-        )
-
-        cv2.putText(
-            display_img,
-            f"Abnormal Ratio: {abnormal_ratio:.2f}",
-            (30, 225),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            color,
-            2,
-        )
-
-        issue_texts = []
-        if cva_bad:
-            issue_texts.append("Neck")
-        if trunk_bad:
-            issue_texts.append("Trunk")
-
-        if issue_texts:
-            cv2.putText(
-                display_img,
-                "Issue: " + ", ".join(issue_texts),
-                (30, 260),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                color,
-                2,
-            )
-
-        if warning_on:
-            cv2.putText(
-                display_img,
-                "WARNING: FIX YOUR POSTURE",
-                (30, 310),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.9,
-                (0, 0, 255),
-                3,
-            )
 
         return av.VideoFrame.from_ndarray(display_img, format="bgr24")
 
