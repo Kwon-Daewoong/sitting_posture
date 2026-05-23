@@ -11,7 +11,7 @@ venv/
 *.csv
 
 # Trained model
-*.pth
+
 *.pt
 *.pkl
 
