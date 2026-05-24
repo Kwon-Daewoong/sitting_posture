@@ -7,9 +7,6 @@ __pycache__/
 .venv/
 venv/
 
-# Dataset
-*.csv
-
 # Trained model
 
 *.pt
